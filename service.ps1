@@ -1,374 +1,185 @@
-$isAdmin = [System.Security.Principal.WindowsPrincipal]::new([System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "`n╔══════════════════════════════════════════════════╗" -ForegroundColor Red
-    Write-Host "║           ADMINISTRATOR PRIVILEGES REQUIRED       ║" -ForegroundColor Red
-    Write-Host "║     Запусти скрипт от имени Администратора!       ║" -ForegroundColor Red
-    Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Red
-    exit
-}
+$logo = @'
+ ____   __  __  __  __  _____  __  __  __   __
+/ ___|  \ \/ / |  \/  | |  __ \ \ \/ /  \ \ / /
+\___ \   \  /  | \  / | | |__) | \  /    \ V /
+ ___) |  /  \  | |\/| | |  _  /  /  \     > <
+|____/  /_/\_\ |_|  |_| |_| \_\ /_/\_\   / . \
+                                         /_/ \_\
+'@
 
-Write-Host "LOOL, again sxmurxy! :)" -ForegroundColor Cyan
-Write-Host ""
+Write-Host $logo -ForegroundColor Cyan
+Write-Host "LOOL, again sxmurxy! :)" -ForegroundColor Red                                                     
+                                                       
+                                                       
+"@ -ForegroundColor Cyan
 
-try {
-    $bootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
-    $uptime = (Get-Date) - $bootTime
-    Write-Host "SYSTEM BOOT TIME" -ForegroundColor Cyan
-    Write-Host ("  Last Boot: {0}" -f $bootTime.ToString("yyyy-MM-dd HH:mm:ss")) -ForegroundColor White
-    Write-Host ("  Uptime: {0} days, {1:D2}:{2:D2}:{3:D2}" -f $uptime.Days, $uptime.Hours, $uptime.Minutes, $uptime.Seconds) -ForegroundColor White
-} catch {
-    Write-Host "Unable to retrieve boot time information" -ForegroundColor Red
-}
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-$drives = Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.DriveType -ne 5 }
-if ($drives) {
-    Write-Host "`nCONNECTED DRIVES" -ForegroundColor Cyan
-    foreach ($drive in $drives) {
-        Write-Host ("  {0}: {1}" -f $drive.DeviceID, $drive.FileSystem) -ForegroundColor Green
-    }
-}
-
-Write-Host "`nSERVICE STATUS" -ForegroundColor Cyan
-
-$services = @(
-    @{Name = "SysMain"; DisplayName = "SysMain"},
-    @{Name = "PcaSvc"; DisplayName = "Program Compatibility Assistant Service"},
-    @{Name = "DPS"; DisplayName = "Diagnostic Policy Service"},
-    @{Name = "EventLog"; DisplayName = "Windows Event Log"},
-    @{Name = "Schedule"; DisplayName = "Task Scheduler"},
-    @{Name = "Bam"; DisplayName = "Background Activity Moderator"},
-    @{Name = "Dusmsvc"; DisplayName = "Data Usage"},
-    @{Name = "Appinfo"; DisplayName = "Application Information"},
-    @{Name = "CDPSvc"; DisplayName = "Connected Devices Platform Service"},
-    @{Name = "DcomLaunch"; DisplayName = "DCOM Server Process Launcher"},
-    @{Name = "PlugPlay"; DisplayName = "Plug and Play"},
-    @{Name = "wsearch"; DisplayName = "Windows Search"}
+$servicesToCheck = @(
+    "SysMain","PcaSvc","DPS","EventLog","Schedule","Bam","wsearch",
+    "Appinfo","SSDPSRV","CDPSvc","DcomLaunch","PlugPlay",
+    "DiagTrack","DusmSvc"
 )
 
-foreach ($svc in $services) {
-    $service = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
-    if ($service) {
-        if ($service.Status -eq "Running") {
-            $displayName = $service.DisplayName
-            if ($displayName.Length -gt 40) {
-                $displayName = $displayName.Substring(0, 37) + "..."
-            }
-            Write-Host ("  {0,-12} {1,-40}" -f $svc.Name, $displayName) -ForegroundColor Green -NoNewline
-            
-            if ($svc.Name -eq "Bam") {
-                Write-Host " | Enabled" -ForegroundColor Yellow
-            } else {
-                try {
-                    $process = Get-CimInstance Win32_Service -Filter "Name='$($svc.Name)'" | Select-Object ProcessId
-                    if ($process.ProcessId -gt 0) {
-                        $proc = Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue
-                        if ($proc) {
-                            Write-Host (" | {0}" -f $proc.StartTime.ToString("HH:mm:ss")) -ForegroundColor Yellow
-                        } else {
-                            Write-Host " | N/A" -ForegroundColor Yellow
-                        }
-                    } else {
-                        Write-Host " | N/A" -ForegroundColor Yellow
-                    }
-                } catch {
-                    Write-Host " | N/A" -ForegroundColor Yellow
-                }
-            }
-        } else {
-            $displayName = $service.DisplayName
-            if ($displayName.Length -gt 40) {
-                $displayName = $displayName.Substring(0, 37) + "..."
-            }
-            Write-Host ("  {0,-12} {1,-40} {2}" -f $svc.Name, $displayName, $service.Status) -ForegroundColor Red
-        }
-    } else {
-        Write-Host ("  {0,-12} {1,-40} {2}" -f $svc.Name, "Not Found", "Stopped") -ForegroundColor Yellow
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Windows Service Manager"
+$form.Size = New-Object System.Drawing.Size(600,450)
+$form.StartPosition = "CenterScreen"
+$form.MaximizeBox = $false
+$form.FormBorderStyle = "FixedDialog"
+
+$headerLabel = New-Object System.Windows.Forms.Label
+$headerLabel.Text = "Select services to enable and set to auto-start:"
+$headerLabel.Size = New-Object System.Drawing.Size(560,20)
+$headerLabel.Location = New-Object System.Drawing.Point(20,20)
+$headerLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($headerLabel)
+
+$listView = New-Object System.Windows.Forms.ListView
+$listView.Size = New-Object System.Drawing.Size(560,280)
+$listView.Location = New-Object System.Drawing.Point(20,50)
+$listView.View = "Details"
+$listView.FullRowSelect = $true
+$listView.GridLines = $true
+$listView.MultiSelect = $true
+$listView.CheckBoxes = $true
+
+$listView.Columns.Add("Enable", 60) | Out-Null
+$listView.Columns.Add("Service Name", 150) | Out-Null
+$listView.Columns.Add("Status", 80) | Out-Null
+$listView.Columns.Add("Startup Type", 100) | Out-Null
+$listView.Columns.Add("Description", 150) | Out-Null
+
+$form.Controls.Add($listView)
+
+$buttonPanel = New-Object System.Windows.Forms.Panel
+$buttonPanel.Size = New-Object System.Drawing.Size(560,40)
+$buttonPanel.Location = New-Object System.Drawing.Point(20,340)
+
+$selectAllBox = New-Object System.Windows.Forms.CheckBox
+$selectAllBox.Text = "Select All"
+$selectAllBox.Size = New-Object System.Drawing.Size(100,20)
+$selectAllBox.Location = New-Object System.Drawing.Point(10,10)
+$selectAllBox.Add_CheckedChanged({
+    foreach ($item in $listView.Items) {
+        $item.Checked = $selectAllBox.Checked
     }
+})
+$buttonPanel.Controls.Add($selectAllBox)
+
+$buttonEnable = New-Object System.Windows.Forms.Button
+$buttonEnable.Text = "Enable Selected Services"
+$buttonEnable.Size = New-Object System.Drawing.Size(180,30)
+$buttonEnable.Location = New-Object System.Drawing.Point(120,5)
+$buttonEnable.BackColor = [System.Drawing.Color]::LightBlue
+$buttonPanel.Controls.Add($buttonEnable)
+
+$buttonRefresh = New-Object System.Windows.Forms.Button
+$buttonRefresh.Text = "Refresh List"
+$buttonRefresh.Size = New-Object System.Drawing.Size(100,30)
+$buttonRefresh.Location = New-Object System.Drawing.Point(310,5)
+$buttonPanel.Controls.Add($buttonRefresh)
+
+$form.Controls.Add($buttonPanel)
+
+$statusLabel = New-Object System.Windows.Forms.Label
+$statusLabel.Text = "Ready - Select services and click 'Enable Selected Services'"
+$statusLabel.Size = New-Object System.Drawing.Size(560,20)
+$statusLabel.Location = New-Object System.Drawing.Point(20,390)
+$statusLabel.TextAlign = "MiddleLeft"
+$form.Controls.Add($statusLabel)
+
+$serviceDescriptions = @{
+    "SysMain" = "Prefetcher for faster app loading"
+    "PcaSvc" = "Program Compatibility Assistant"
+    "DPS" = "Diagnostic Policy Service"
+    "EventLog" = "Windows Event Log"
+    "Schedule" = "Task Scheduler"
+    "Bam" = "Background Activity Moderator"
+    "wsearch" = "Windows Search"
+    "Appinfo" = "Application Information"
+    "SSDPSRV" = "SSDP Discovery"
+    "CDPSvc" = "Connected Devices Platform"
+    "DcomLaunch" = "DCOM Server Process Launcher"
+    "PlugPlay" = "Plug and Play"
+    "DiagTrack" = "Connected User Experiences and Telemetry"
+    "DusmSvc" = "Data Usage Service"
 }
 
-Write-Host "`nREGISTRY" -ForegroundColor Cyan
-
-$settings = @(
-    @{ Name = "CMD"; Path = "HKCU:\Software\Policies\Microsoft\Windows\System"; Key = "DisableCMD"; Warning = "Disabled"; Safe = "Available" },
-    @{ Name = "PowerShell Logging"; Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"; Key = "EnableScriptBlockLogging"; Warning = "Disabled"; Safe = "Enabled" },
-    @{ Name = "Activities Cache"; Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Key = "EnableActivityFeed"; Warning = "Disabled"; Safe = "Enabled" },
-    @{ Name = "Prefetch Enabled"; Path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"; Key = "EnablePrefetcher"; Warning = "Disabled"; Safe = "Enabled" }
-)
-
-foreach ($s in $settings) {
-    $status = Get-ItemProperty -Path $s.Path -Name $s.Key -ErrorAction SilentlyContinue
-    Write-Host "  " -NoNewline
-    if ($status -and $status.$($s.Key) -eq 0) {
-        Write-Host "$($s.Name): " -NoNewline -ForegroundColor White
-        Write-Host "$($s.Warning)" -ForegroundColor Red
-    } else {
-        Write-Host "$($s.Name): " -NoNewline -ForegroundColor White
-        Write-Host "$($s.Safe)" -ForegroundColor Green
-    }
-}
-
-function Check-EventLog {
-    param ($logName, $eventID, $message)
-    $event = Get-WinEvent -LogName $logName -FilterXPath "*[System[EventID=$eventID]]" -MaxEvents 1 -ErrorAction SilentlyContinue
-    if ($event) {
-        Write-Host "  $message at: " -NoNewline -ForegroundColor White
-        Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
-    } else {
-        Write-Host "  $message - No records found" -ForegroundColor Green
-    }
-}
-
-function Check-RecentEventLog {
-    param ($logName, $eventIDs, $message)
-    $event = Get-WinEvent -LogName $logName -FilterXPath "*[System[EventID=$($eventIDs -join ' or EventID=')]]" -MaxEvents 1 -ErrorAction SilentlyContinue
-    if ($event) {
-        Write-Host "  $message (ID: $($event.Id)) at: " -NoNewline -ForegroundColor White
-        Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
-    } else {
-        Write-Host "  $message - No records found" -ForegroundColor Green
-    }
-}
-
-function Check-DeviceDeleted {
-    try {
-        $event = Get-WinEvent -LogName "Microsoft-Windows-Kernel-PnP/Configuration" -FilterXPath "*[System[EventID=400]]" -MaxEvents 1 -ErrorAction SilentlyContinue
-        if ($event) {
-            Write-Host "  Device configuration changed at: " -NoNewline -ForegroundColor White
-            Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
-            return
-        }
-    } catch {}
-
-    try {
-        $event = Get-WinEvent -FilterHashtable @{LogName="System"; ID=225} -MaxEvents 1 -ErrorAction SilentlyContinue
-        if ($event) {
-            Write-Host "  Device removed at: " -NoNewline -ForegroundColor White
-            Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
-            return
-        }
-    } catch {}
-
-    try {
-        $events = Get-WinEvent -LogName "System" | Where-Object {$_.Id -eq 225 -or $_.Id -eq 400} | Sort-Object TimeCreated -Descending | Select-Object -First 1
-        if ($events) {
-            Write-Host "  Last device change at: " -NoNewline -ForegroundColor White
-            Write-Host $events.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
-            return
-        }
-    } catch {}
-
-    Write-Host "  Device changes - No records found" -ForegroundColor Green
-}
-
-Write-Host "`nEVENT LOGS" -ForegroundColor Cyan
-
-Check-EventLog "Application" 3079 "USN Journal cleared"
-Check-RecentEventLog "System" @(104, 1102) "Event Logs cleared"
-Check-EventLog "System" 1074 "Last PC Shutdown"
-Check-EventLog "Security" 4616 "System time changed"
-Check-EventLog "System" 6005 "Event Log Service started"
-Check-DeviceDeleted
-
-
-$prefetchPath = "$env:SystemRoot\Prefetch"
-if (Test-Path $prefetchPath) {
-    Write-Host "`nPREFETCH INTEGRITY" -ForegroundColor Cyan
+function Refresh-Services {
+    $listView.Items.Clear()
     
-    $files = Get-ChildItem -Path $prefetchPath -Filter *.pf -Force -ErrorAction SilentlyContinue
-    if (-not $files) {
-        Write-Host "  No prefetch found?? Check the folder please" -ForegroundColor Yellow
-    } else {
-        $hashTable = @{}
-        $suspiciousFiles = @{}
-        $totalFiles = $files.Count
+    foreach ($serviceName in $servicesToCheck) {
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        $description = $serviceDescriptions[$serviceName]
+        
+        if ($service) {
+            $status = $service.Status.ToString()
+            $startupObj = Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
+            $startup = if ($startupObj) { $startupObj.StartMode } else { "Unknown" }
+            
+            $item = New-Object System.Windows.Forms.ListViewItem("")
+            $item.Checked = $false
+            $item.SubItems.Add($serviceName) | Out-Null
+            $item.SubItems.Add($status) | Out-Null
+            $item.SubItems.Add($startup) | Out-Null
+            $item.SubItems.Add($description) | Out-Null
+            
+            if ($status -eq "Running") {
+                $item.BackColor = [System.Drawing.Color]::FromArgb(240, 255, 240)
+            } else {
+                $item.BackColor = [System.Drawing.Color]::FromArgb(255, 240, 240)
+            }
+            
+            $listView.Items.Add($item) | Out-Null
+        } else {
+            $item = New-Object System.Windows.Forms.ListViewItem("")
+            $item.Checked = $false
+            $item.SubItems.Add($serviceName) | Out-Null
+            $item.SubItems.Add("Not Found") | Out-Null
+            $item.SubItems.Add("N/A") | Out-Null
+            $item.SubItems.Add($description) | Out-Null
+            $item.BackColor = [System.Drawing.Color]::LightYellow
+            $listView.Items.Add($item) | Out-Null
+        }
+    }
+}
 
-        $hiddenFiles = @()
-        $readOnlyFiles = @()
-        $hiddenAndReadOnlyFiles = @()
-        $errorFiles = @()
-
-        foreach ($file in $files) {
+$buttonEnable.Add_Click({
+    $selectedCount = 0
+    $successCount = 0
+    
+    foreach ($item in $listView.Items) {
+        if ($item.Checked) {
+            $selectedCount++
+            $serviceName = $item.SubItems[1].Text
+            
             try {
-                $isHidden = $file.Attributes -band [System.IO.FileAttributes]::Hidden
-                $isReadOnly = $file.Attributes -band [System.IO.FileAttributes]::ReadOnly
-                
-                if ($isHidden -and $isReadOnly) {
-                    $hiddenAndReadOnlyFiles += $file
-                    if (-not $suspiciousFiles.ContainsKey($file.Name)) {
-                        $suspiciousFiles[$file.Name] = "Hidden and Read-only"
-                    }
-                } elseif ($isHidden) {
-                    $hiddenFiles += $file
-                    if (-not $suspiciousFiles.ContainsKey($file.Name)) {
-                        $suspiciousFiles[$file.Name] = "Hidden file"
-                    }
-                } elseif ($isReadOnly) {
-                    $readOnlyFiles += $file
-                    if (-not $suspiciousFiles.ContainsKey($file.Name)) {
-                        $suspiciousFiles[$file.Name] = "Read-only file"
-                    }
+                Set-Service -Name $serviceName -StartupType Automatic -ErrorAction SilentlyContinue
+                $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+                if ($service -and $service.Status -ne 'Running') {
+                    Start-Service -Name $serviceName -ErrorAction SilentlyContinue
                 }
-
-                $hash = Get-FileHash -Path $file.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue
-                if ($hash) {
-                    if ($hashTable.ContainsKey($hash.Hash)) {
-                        $hashTable[$hash.Hash].Add($file.Name)
-                    } else {
-                        $hashTable[$hash.Hash] = [System.Collections.Generic.List[string]]::new()
-                        $hashTable[$hash.Hash].Add($file.Name)
-                    }
-                }
+                $successCount++
             } catch {
-                $errorFiles += $file
-                if (-not $suspiciousFiles.ContainsKey($file.Name)) {
-                    $suspiciousFiles[$file.Name] = "Error analyzing file: $($_.Exception.Message)"
-                }
             }
-        }
-
-        if ($hiddenAndReadOnlyFiles.Count -gt 0) {
-            Write-Host "  Hidden & Read-only Files: $($hiddenAndReadOnlyFiles.Count) found" -ForegroundColor Yellow
-            foreach ($file in $hiddenAndReadOnlyFiles) {
-                Write-Host ("    {0}" -f $file.Name) -ForegroundColor White
-            }
-        }
-
-        if ($hiddenFiles.Count -gt 0) {
-            Write-Host "  Hidden Files: $($hiddenFiles.Count) found" -ForegroundColor Yellow
-            foreach ($file in $hiddenFiles) {
-                Write-Host ("    {0}" -f $file.Name) -ForegroundColor White
-            }
-        } else {
-            Write-Host "  Hidden Files: None" -ForegroundColor Green
-        }
-
-        if ($readOnlyFiles.Count -gt 0) {
-            Write-Host "  Read-Only Files: $($readOnlyFiles.Count)" -ForegroundColor Yellow
-            foreach ($file in $readOnlyFiles) {
-                Write-Host ("    {0}" -f $file.Name) -ForegroundColor White
-            }
-        } else {
-            Write-Host "  Read-Only Files: None" -ForegroundColor Green
-        }
-
-        $repeatedHashes = $hashTable.GetEnumerator() | Where-Object { $_.Value.Count -gt 1 }
-        if ($repeatedHashes) {
-            Write-Host "  Duplicate Files: $($repeatedHashes.Count) sets found" -ForegroundColor Yellow
-            foreach ($entry in $repeatedHashes) {
-                foreach ($file in $entry.Value) {
-                    if (-not $suspiciousFiles.ContainsKey($file)) {
-                        $suspiciousFiles[$file] = "Duplicate file"
-                    }
-                }
-                Write-Host ("    Duplicate set: {0}" -f ($entry.Value -join ", ")) -ForegroundColor White
-            }
-        } else {
-            Write-Host "  Duplicates: None" -ForegroundColor Green
-        }
-
-        if ($suspiciousFiles.Count -gt 0) {
-            Write-Host "`n  SUSPICIOUS FILES FOUND: $($suspiciousFiles.Count)/$totalFiles" -ForegroundColor Yellow
-            foreach ($entry in $suspiciousFiles.GetEnumerator() | Sort-Object Key) {
-                Write-Host ("    {0} : {1}" -f $entry.Key, $entry.Value) -ForegroundColor White
-            }
-        } else {
-            Write-Host "`n  Prefetch integrity: Clean ($totalFiles files checked)" -ForegroundColor Green
         }
     }
-} else {
-    Write-Host "`nCouldnt find prefetch folder?? (check yo paths hoe)" -ForegroundColor Red
-}
-
-try {
-    $recycleBinPath = "$env:SystemDrive" + '\$Recycle.Bin'
     
-    Write-Host "`nRecycle Bin" -ForegroundColor Cyan
-
-    if (Test-Path $recycleBinPath) {
-        $recycleBinFolder = Get-Item -LiteralPath $recycleBinPath -Force
-        $userFolders = Get-ChildItem -LiteralPath $recycleBinPath -Directory -Force -ErrorAction SilentlyContinue
-        
-        if ($userFolders) {
-            $allDeletedItems = @()
-            $latestModTime = $recycleBinFolder.LastWriteTime
-            
-            foreach ($userFolder in $userFolders) {
-                if ($userFolder.LastWriteTime -gt $latestModTime) {
-                    $latestModTime = $userFolder.LastWriteTime
-                }
-                
-                $userItems = Get-ChildItem -LiteralPath $userFolder.FullName -File -Force -ErrorAction SilentlyContinue
-                if ($userItems) {
-                    $allDeletedItems += $userItems
-                    
-                    $latestFile = $userItems | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-                    if ($latestFile -and $latestFile.LastWriteTime -gt $latestModTime) {
-                        $latestModTime = $latestFile.LastWriteTime
-                    }
-                }
-            }
-            
-            Write-Host "  Last Modified: " -NoNewline -ForegroundColor White
-            Write-Host $latestModTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Yellow
-            
-            if ($allDeletedItems.Count -gt 0) {
-                Write-Host "  Total Items: " -NoNewline -ForegroundColor White
-                Write-Host $allDeletedItems.Count -ForegroundColor Yellow
-                
-                $latestItem = $allDeletedItems | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-                Write-Host "  Latest Item: " -NoNewline -ForegroundColor White
-                Write-Host $latestItem.Name -ForegroundColor Gray
-            } else {
-                Write-Host "  Status: " -NoNewline -ForegroundColor White
-                Write-Host "Folders present but empty" -ForegroundColor Green
-            }
-        } else {
-            Write-Host "  Status: " -NoNewline -ForegroundColor White
-            Write-Host "Emptyy" -ForegroundColor Green
-            Write-Host "  Last Modified: " -NoNewline -ForegroundColor White
-            Write-Host $recycleBinFolder.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Green
-        }
-        
-        $clearEvent = Get-WinEvent -FilterHashtable @{LogName="System"; Id=10006} -MaxEvents 1 -ErrorAction SilentlyContinue
-        if ($clearEvent) {
-            Write-Host "  Last Cleared (Event): " -NoNewline -ForegroundColor White
-            Write-Host $clearEvent.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Red
-        }
-    } else {
-        Write-Host "  Recycle Bin not found at: $recycleBinPath" -ForegroundColor Yellow
-        Write-Host "  Note: Recycle Bin may be empty or on different drive" -ForegroundColor Gray
-    }
-
-
-    $consoleHistoryPath = "$env:USERPROFILE\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt"
-    Write-Host "`n  Console Host History:" -ForegroundColor Cyan
+    Refresh-Services
     
-    if (Test-Path $consoleHistoryPath) {
-        $historyFile = Get-Item -Path $consoleHistoryPath -Force
-        Write-Host "    Last Modified: " -NoNewline -ForegroundColor White
-        Write-Host $historyFile.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Yellow
-        
-
-        $attributes = $historyFile.Attributes
-        if ($attributes -ne "Archive") {
-            Write-Host "    Attributes: " -NoNewline -ForegroundColor White
-            Write-Host $attributes -ForegroundColor Yellow
-        } else {
-            Write-Host "    Attributes: Normal" -ForegroundColor Green
-        }
-        
-
-        $fileSize = $historyFile.Length
-        Write-Host "    File Size: " -NoNewline -ForegroundColor White
-        Write-Host "$([math]::Round($fileSize/1024, 2)) KB" -ForegroundColor Yellow
-        
+    if ($selectedCount -eq 0) {
+        $statusLabel.Text = "Please select at least one service to enable"
     } else {
-        Write-Host "    File not found: $consoleHistoryPath" -ForegroundColor Yellow
-        Write-Host "    Note: PowerShell history may be disabled or never used" -ForegroundColor Gray
+        $statusLabel.Text = "Completed: $successCount of $selectedCount services enabled successfully"
     }
+})
 
-} catch {
-    Write-Host "  Error accessing system information: $($_.Exception.Message)" -ForegroundColor Red
-}
+$buttonRefresh.Add_Click({
+    Refresh-Services
+    $statusLabel.Text = "Service list refreshed"
+})
 
-Write-Host "`nCheck Complete, hit up @praiselily if u run into any issues." -ForegroundColor Cyan
+Refresh-Services
+[void]$form.ShowDialog()
